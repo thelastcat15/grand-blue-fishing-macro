@@ -5,6 +5,7 @@ import threading
 import numpy as np
 import cv2
 import mss
+from random import randint
 
 import input_backend as mouse
 
@@ -42,70 +43,83 @@ def cast_fill_ratio(region):
 
 def reel_bar_visible(region):
     frame = grab(region)
+
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, np.array([45, 80, 80]), np.array([75, 255, 255]))
-    return mask.sum() > 500
+
+    green_mask = cv2.inRange(
+        hsv,
+        np.array([45, 80, 80]),
+        np.array([75, 255, 255])
+    )
+
+    red_mask1 = cv2.inRange(
+        hsv,
+        np.array([0, 80, 80]),
+        np.array([10, 255, 255])
+    )
+
+    red_mask2 = cv2.inRange(
+        hsv,
+        np.array([170, 80, 80]),
+        np.array([179, 255, 255])
+    )
+
+    mask = cv2.bitwise_or(
+        green_mask,
+        cv2.bitwise_or(red_mask1, red_mask2)
+    )
+
+    return cv2.countNonZero(mask) > 500
 
 
-def find_fish_and_bar_x(region, black_thresh=40):
-    """คืน (fish_x, bar_x, stats) โดย fish_x/bar_x เป็นพิกเซล x ภายในเฟรมของ region
-
-    bar_x หาโดยดู 'ก้อน' (contour) สีดำที่สูงเกือบเต็มความสูงของแถบแต่แคบกว่าความกว้าง
-    ทั้งหมดมาก (ลักษณะของตัวชี้/แถบควบคุมที่เลื่อนซ้ายขวา) แทนที่จะเฉลี่ยพิกเซลดำ
-    ทั้งหมดในเฟรมตรงๆ ซึ่งจะโดนองค์ประกอบดำที่อยู่นิ่ง (กรอบ/ไอคอน/พื้นหลัง) ถ่วงค่าเฉลี่ย
-    ให้เพี้ยนไปทางตำแหน่งขององค์ประกอบนิ่งนั้นแทน
-    """
+def find_fish_and_bar_x(region):
     frame = grab(region)
-    h, w = frame.shape[:2]
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    green_mask = cv2.inRange(hsv, np.array([45, 80, 80]), np.array([75, 255, 255]))
+    # Green fish
+    green_mask = cv2.inRange(
+        hsv,
+        np.array([45, 80, 80]),
+        np.array([75, 255, 255])
+    )
+
+    # Red fish
+    red_mask1 = cv2.inRange(
+        hsv,
+        np.array([0, 80, 80]),
+        np.array([10, 255, 255])
+    )
+
+    red_mask2 = cv2.inRange(
+        hsv,
+        np.array([170, 80, 80]),
+        np.array([179, 255, 255])
+    )
+
+    # Green OR Red
+    fish_mask = cv2.bitwise_or(
+        green_mask,
+        cv2.bitwise_or(red_mask1, red_mask2)
+    )
+
+    # Find fish X
     fish_x = None
-    ys, xs = np.where(green_mask > 0)
+    ys, xs = np.where(fish_mask > 0)
+
     if len(xs) > 0:
         fish_x = int(xs.mean())
 
+    # Find black bar X
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    black_mask = (gray < black_thresh).astype(np.uint8) * 255
+    black_mask = (gray < 40).astype(np.uint8) * 255
 
     bar_x = None
-    contours, _ = cv2.findContours(black_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    best = None
-    for c in contours:
-        cx, cy, cw, ch = cv2.boundingRect(c)
-        # ตัวชี้ควรสูงเกือบเต็มความสูงของแถบ แต่แคบกว่าความกว้างทั้งแถบมาก
-        if ch >= h * 0.5 and cw <= w * 0.5:
-            area = cw * ch
-            if best is None or area > best[0]:
-                best = (area, cx + cw // 2)
-    if best:
-        bar_x = best[1]
-    else:
-        # หาก้อนที่เข้าเงื่อนไขไม่เจอ -> fallback ใช้ค่าเฉลี่ยทั้งหมด (จะไม่แม่นเท่า)
-        ys2, xs2 = np.where(black_mask > 0)
-        if len(xs2) > 0:
-            bar_x = int(xs2.mean())
+    ys2, xs2 = np.where(black_mask > 0)
 
-    stats = {
-        "fish_pixels": int((green_mask > 0).sum()),
-        "black_pixels": int((black_mask > 0).sum()),
-        "used_contour": best is not None,
-    }
-    return fish_x, bar_x, stats
+    if len(xs2) > 0:
+        bar_x = int(xs2.mean())
 
-
-def debug_snapshot(region, save_path="debug_reel.png"):
-    """แคปเฟรมปัจจุบันของ region, รันตรวจจับเหมือนตอนบอททำงานจริง, วาดเส้นทับตำแหน่ง
-    fish_x (เขียว) กับ bar_x (แดง) ลงในภาพ แล้วเซฟไว้ให้ดูว่าตรวจจับถูกจุดไหม"""
-    fish_x, bar_x, stats = find_fish_and_bar_x(region)
-    frame = grab(region)
-    h = frame.shape[0]
-    if fish_x is not None:
-        cv2.line(frame, (fish_x, 0), (fish_x, h), (0, 255, 0), 2)
-    if bar_x is not None:
-        cv2.line(frame, (bar_x, 0), (bar_x, h), (0, 0, 255), 2)
-    cv2.imwrite(save_path, frame)
-    return fish_x, bar_x, stats
+    return fish_x, bar_x
 
 
 class FishBot:
@@ -181,7 +195,7 @@ class FishBot:
         mouse.mouse_up()
         self.log(f"    ปล่อยที่ {best * 100:.1f}%")
 
-    def _phase_2_shake(self, max_seconds=30):
+    def _phase_2_shake(self, max_seconds=5):
         region = self.cfg["shake_search_region"]
         reel_region = self.cfg["reel_bar_region"]
         template = self.cfg["shake_template_path"]
@@ -190,10 +204,11 @@ class FishBot:
         while time.time() - t0 < max_seconds and not self.stop_event.is_set():
             hit = find_template(region, template, self.cfg["match_threshold"])
             if hit:
+                t0 = time.time()
                 x, y, score = hit
                 # ขยับเมาส์ไปจุดใหม่ก่อนคลิกเสมอ เพื่อบังคับ mousemove event จริงๆ
                 # ให้เกมเห็น ไม่ให้ 'คลิกลอย' เพราะเมาส์ถูกวาปไปตรงนั้นเฉยๆ
-                mouse.click_at(x, y)
+                mouse.click_at(x + randint(-3,3), y)
                 self.log(f"    คลิก SHAKE ({x},{y}) score={score:.2f}")
                 time.sleep(0.15)
             if reel_bar_visible(reel_region):
@@ -216,7 +231,8 @@ class FishBot:
             if not reel_bar_visible(region):
                 self.log("    แถบตกปลาหายไป (จบ/หลุด)")
                 break
-            fish_x, bar_x, _stats = find_fish_and_bar_x(region)
+            fish_x, bar_x = find_fish_and_bar_x(region)
+            self.log(f"fish_x: {fish_x} | bar_x: {bar_x}")
             if fish_x is None or bar_x is None:
                 time.sleep(0.005)
                 continue

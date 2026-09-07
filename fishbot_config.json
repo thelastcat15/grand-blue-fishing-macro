@@ -1,21 +1,21 @@
 {
   "cast_bar_region": [
-    548,
-    491,
-    31,
-    137
+    569,
+    472,
+    37,
+    156
   ],
   "shake_search_region": [
-    149,
-    242,
-    660,
-    619
+    141,
+    95,
+    666,
+    754
   ],
   "reel_bar_region": [
-    318,
-    744,
+    319,
+    754,
     321,
-    57
+    51
   ],
   "shake_template_path": "assets\\shake_button.png",
   "match_threshold": 0.75,

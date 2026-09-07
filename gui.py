@@ -15,7 +15,7 @@ from PIL import Image, ImageTk
 
 from config import load_config, save_config
 from region_selector import RegionSelector
-from bot_core import FishBot, debug_snapshot
+from bot_core import FishBot
 
 ASSET_DIR = "assets"
 os.makedirs(ASSET_DIR, exist_ok=True)
@@ -43,15 +43,6 @@ class App:
         self._region_row(frame_regions, "หลอดพลัง (โยนเบ็ด)", "cast_bar_region", self.select_cast_bar)
         self._region_row(frame_regions, "พื้นที่หาไม้ปุ่ม SHAKE", "shake_search_region", self.select_shake_search)
         self._region_row(frame_regions, "แถบตกปลาแนวนอน", "reel_bar_region", self.select_reel_bar)
-
-        row_debug = ttk.Frame(frame_regions)
-        row_debug.pack(fill="x", padx=6, pady=(4, 8))
-        ttk.Button(row_debug, text="🔍 ทดสอบตรวจจับเฟส 3", command=self.debug_reel_detection).pack(side="left")
-        ttk.Label(
-            row_debug, text="(เปิดเกมไปที่หน้าประคองแถบตกปลาไว้ก่อนกด)", foreground="#666"
-        ).pack(side="left", padx=8)
-        self.debug_preview = ttk.Label(row_debug, text="")
-        self.debug_preview.pack(side="left", padx=8)
 
         frame_template = ttk.LabelFrame(self.root, text="2) รูปปุ่ม SHAKE (ใช้จับคู่บนจอ)")
         frame_template.pack(fill="x", **pad)
@@ -184,33 +175,6 @@ class App:
 
     def select_reel_bar(self):
         self._select_region("reel_bar_region")
-
-    def debug_reel_detection(self):
-        region = self.cfg.get("reel_bar_region")
-        if not region:
-            messagebox.showwarning("ยังไม่ได้ตั้งค่า", "กรุณาเลือก 'แถบตกปลาแนวนอน' ก่อน")
-            return
-        try:
-            fish_x, bar_x, stats = debug_snapshot(tuple(region), save_path="debug_reel.png")
-        except Exception as e:
-            messagebox.showerror("ทดสอบไม่สำเร็จ", str(e))
-            return
-
-        img = Image.open("debug_reel.png")
-        img.thumbnail((240, 80))
-        self._debug_img = ImageTk.PhotoImage(img)
-        self.debug_preview.config(image=self._debug_img, text="")
-
-        self.log(
-            f"[debug] fish_x={fish_x} bar_x={bar_x} | "
-            f"pixels เขียว(ปลา)={stats['fish_pixels']} ดำ(แถบ)={stats['black_pixels']} "
-            f"ใช้ contour={stats['used_contour']}"
-        )
-        self.log(
-            "    เส้นเขียว = ตำแหน่งปลาที่ตรวจจับได้, เส้นแดง = ตำแหน่งแถบดำที่ตรวจจับได้ "
-            "— ถ้าเส้นไม่ตรงจุดจริงบนจอ ให้ลองเลือก 'แถบตกปลาแนวนอน' ใหม่ให้แคบลง "
-            "(ตัดขอบ/ไอคอน/พื้นหลังดำที่ไม่ใช่ตัวแถบเลื่อนออกไป)"
-        )
 
     def select_shake_template(self):
         self.root.withdraw()
