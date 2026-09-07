@@ -1,0 +1,6 @@
+pyautogui
+opencv-python
+mss
+numpy
+pillow
+pydirectinput; platform_system == "Windows"

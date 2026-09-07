@@ -1,0 +1,25 @@
+{
+  "cast_bar_region": [
+    548,
+    491,
+    31,
+    137
+  ],
+  "shake_search_region": [
+    149,
+    242,
+    660,
+    619
+  ],
+  "reel_bar_region": [
+    318,
+    744,
+    321,
+    57
+  ],
+  "shake_template_path": "assets\\shake_button.png",
+  "match_threshold": 0.75,
+  "reel_deadzone": 6,
+  "reel_lead_time": 0.05,
+  "post_catch_cooldown": 2.7
+}
