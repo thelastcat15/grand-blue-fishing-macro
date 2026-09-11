@@ -13,6 +13,20 @@ DEFAULT_CONFIG = {
     "match_threshold": 0.75,
     "reel_deadzone": 6,      # px — โซนกลางที่ไม่สลับสถานะคลิก/ปล่อย (กันสั่นถี่ในเฟส 3)
     "reel_lead_time": 0.05,  # วินาที — พยากรณ์ error ล่วงหน้าเพื่อชดเชย latency ของลูป
+    "reel_bar_width": None,  # ความกว้างแถบดำที่เรียนรู้จากภาพจริง
+    "reel_control_range": 55,  # ระยะ error ที่ถือว่าแรงควบคุมเต็ม
+    "reel_min_hold": 0.015,  # เวลากดขั้นต่ำต่อพัลส์
+    "reel_max_hold": 0.14,  # เวลากดสูงสุดต่อพัลส์
+    "reel_finish_missing": 0.65,  # ปลาและแถบหายต่อเนื่องกี่วินาทีจึงถือว่าจบ
+    "reel_fish_missing": 0.65,  # ปลาหายต่อเนื่องกี่วินาทีจึงถือว่าจบเฟส
+    "reel_bar_missing": 0.65,  # กรอบดำหายต่อเนื่องกี่วินาทีจึงถือว่าจบเฟส
+    "reel_phase2_confirm_frames": 3,
+    "reel_box_width_min": 70,
+    "reel_box_width_max": 220,
+    "reel_edge": 3,
+    "reel_max_jump": 80,
+    "reel_coast_max": 3,
+    "reel_velocity_clamp": 1000,
     "post_catch_cooldown": 2.0,  # วินาที — พักหลังตกจบ/หลุด ก่อนเริ่มโยนเบ็ดใหม่
 }
 
