@@ -777,7 +777,7 @@ class FishBot:
                     f"score={score:.2f}"
                 )
 
-                time.sleep(0.15)
+                time.sleep(0.05)
 
             # ------------------------------------------------
             # ตรวจว่า reel bar มาแล้ว
