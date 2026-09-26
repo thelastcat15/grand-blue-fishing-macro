@@ -216,16 +216,26 @@ def _runs(mask):
     ]
 
 
-def find_fish_x(frame, prev_fish_x=None):
-    """หา center X ของปลาโดยนับช่วงคอลัมน์สีเขียว/แดง"""
-    blue, green, red = cv2.split(frame)
-    masks = (
+def _fish_masks(frame):
+    """mask ปลาสีเขียว / สีแดง (คืนเป็น tuple ของ mask)"""
+    blue, green, red = cv2.split(frame.astype(np.int16))
+    return (
         (green > 110) & (blue < green - 25) & (red < green - 15),
         (red > 110) & (green < red - 35) & (blue < red - 35),
     )
+
+
+def _fish_columns(frame):
+    """คอลัมน์ที่มีพิกเซลปลา (ใช้เช็คว่าปลาบังกรอบดำอยู่ข้างไหน)"""
+    green_mask, red_mask = _fish_masks(frame)
+    return (green_mask | red_mask).sum(axis=0) > 2
+
+
+def find_fish_x(frame, prev_fish_x=None):
+    """หา center X ของปลาโดยนับช่วงคอลัมน์สีเขียว/แดง"""
     candidates = []
 
-    for mask in masks:
+    for mask in _fish_masks(frame):
         columns = mask.sum(axis=0) > 2
         for start, end, length in _runs(columns):
             if length >= 25:
@@ -246,110 +256,187 @@ def find_fish_x(frame, prev_fish_x=None):
     return int(round((best[0] + best[1]) / 2))
 
 # ============================================================
-# FIND BLACK REEL BAR
+# FIND BLACK REEL BOX
 # ============================================================
+#
+# กรอบดำ = สี่เหลี่ยมสีเทาเข้ม (B≈G≈R) มีลูกศรสีขาว "<" อยู่ข้างใน
+#   - พื้นน้ำเป็นสีน้ำเงิน, ปลาเป็นเขียว/แดง -> มีสี (chroma สูง)
+#   - กรอบดำ + ลูกศรขาว -> ไม่มีสี (chroma ต่ำ)
+# จึงนับเฉพาะคอลัมน์ที่ "เกือบทั้งแถว" เป็นพิกเซลไม่มีสี
+# เส้นเอ็นตกปลาบาง ๆ จะไม่ผ่านเกณฑ์นี้
+#
+# เมื่อปลาว่ายทับกรอบ กรอบจะถูกตัดเป็นท่อน -> เชื่อมท่อนที่คั่นด้วยปลา
+# ถ้ายังเห็นแค่บางส่วน -> ใช้ขอบด้านที่ไม่ถูกบัง + ความกว้างที่เรียนรู้ไว้
 
-def _find_bar_candidates(frame, min_width=30, max_width=None, edge=3):
-    """หาช่วงกรอบดำจาก dark runs ในแถบแนวนอน"""
-    _, green, red = cv2.split(frame)
-    blue = frame[:, :, 0]
+BOX_COLUMN_FILL = 0.6       # สัดส่วนแถวที่ต้องเป็นสีเทา/ขาว จึงนับเป็นคอลัมน์ของกรอบ
+BOX_MIN_VISIBLE = 18        # ส่วนของกรอบที่ต้องเห็นอย่างน้อย (px)
+BOX_PARTIAL_RATIO = 0.85    # เห็นแคบกว่า expected * ค่านี้ = ถูกบัง/ถูกตัดขอบ
+BOX_DEFAULT_WIDTH = 80.0    # ใช้ถ้ายังไม่เคยเรียนรู้ความกว้าง
+
+
+def _neutral_mask(frame):
+    """พิกเซลที่ไม่มีสี: เทาเข้มของกรอบ + ลูกศรขาว"""
+    f = frame.astype(np.int16)
+    chroma = f.max(axis=2) - f.min(axis=2)
+    return chroma < 24
+
+
+def _white_mask(frame):
+    """ลูกศรสีขาวในกรอบ"""
+    f = frame.astype(np.int16)
+    return (f.min(axis=2) > 170) & (f.max(axis=2) - f.min(axis=2) < 40)
+
+
+def detect_reel_box(frame, expected_width=None, edge=3):
+    """
+    หากรอบดำในแถบตกปลา
+
+    คืนค่า dict:
+        center   : center X ของกรอบ (ประมาณแม้ถูกปลาบัง)
+        width    : ความกว้างที่มองเห็นจริง
+        full     : True ถ้าเห็นกรอบครบ (ใช้เรียนรู้ความกว้างได้)
+    หรือ None ถ้าไม่เจอ
+    """
     height, width = frame.shape[:2]
-    band = slice(int(height * 0.10), int(height * 0.90))
-    dark = (red[band] < 55) & (green[band] < 55) & (blue[band] < 70)
-    columns = dark.sum(axis=0) > 15
-    if max_width is None:
-        max_width = width * 0.85
+    band = slice(int(height * 0.15), max(int(height * 0.85), 1))
 
-    raw = [
-        (start, end)
-        for start, end, _ in _runs(columns)
-        if not (end < edge or start > width - edge)
-    ]
-    if not raw:
-        return []
+    neutral = _neutral_mask(frame)[band]
+    band_h = neutral.shape[0]
+    if band_h == 0:
+        return None
 
-    merged = [list(raw[0])]
-    for start, end in raw[1:]:
-        if start - merged[-1][1] <= 45:
-            merged[-1][1] = end
+    strong = neutral.mean(axis=0) >= BOX_COLUMN_FILL
+    chevron = _white_mask(frame)[band].sum(axis=0) >= band_h * 0.25
+    fish_cols = _fish_columns(frame)
+
+    runs = [[start, end] for start, end, _ in _runs(strong)]
+    if not runs:
+        return None
+
+    exp_w = float(expected_width) if expected_width else None
+    merge_limit = (exp_w or BOX_DEFAULT_WIDTH) * 1.3
+
+    # เชื่อมท่อนที่คั่นด้วยช่องเล็ก ๆ หรือคั่นด้วยตัวปลา
+    merged = [runs[0]]
+    for start, end in runs[1:]:
+        prev = merged[-1]
+        gap = start - prev[1] - 1
+        gap_is_fish = gap > 0 and fish_cols[prev[1] + 1:start].mean() >= 0.7
+        if (gap <= 3 or gap_is_fish) and end - prev[0] + 1 <= merge_limit:
+            prev[1] = end
         else:
             merged.append([start, end])
 
-    return [
-        {
+    candidates = []
+    for start, end in merged:
+        w = end - start + 1
+        if w < BOX_MIN_VISIBLE:
+            continue
+
+        has_chevron = chevron[start:end + 1].sum() >= 3
+        touch_left = start <= edge
+        touch_right = end >= width - 1 - edge
+
+        # ขอบกรอบ UI สีเทาที่ปลายแถบ (แคบ ติดขอบ ไม่มีลูกศร) -> ไม่ใช่กรอบดำ
+        ref_w = exp_w or BOX_DEFAULT_WIDTH
+        if (
+            not has_chevron
+            and (touch_left or touch_right)
+            and w < ref_w * 0.6
+        ):
+            continue
+
+        candidates.append({
             "start": start,
             "end": end,
-            "width": end - start + 1,
-        }
-        for start, end in merged
-        if min_width <= end - start + 1 <= max_width
-    ]
+            "width": w,
+            "chevron": has_chevron,
+            "touch_left": touch_left,
+            "touch_right": touch_right,
+            "fish_left": bool(fish_cols[max(0, start - 3):start].any()),
+            "fish_right": bool(fish_cols[end + 1:end + 4].any()),
+        })
 
-
-def _select_bar_candidate(
-    frame,
-    expected_width=None,
-    min_width=30,
-    max_width=None,
-    edge=3,
-):
-    candidates = _find_bar_candidates(frame, min_width, max_width, edge)
     if not candidates:
         return None
 
-    if expected_width is not None:
-        matching = [
-            candidate for candidate in candidates
-            if abs(candidate["width"] - expected_width)
-            <= max(expected_width * 0.45, 12)
-        ]
-        if matching:
-            candidates = matching
+    def score(c):
+        s = c["width"]
+        if c["chevron"]:
+            s += 1000
+        if exp_w is not None:
+            s -= abs(c["width"] - exp_w) * 0.5
+        return s
 
-    return max(
-        candidates,
-        key=lambda candidate: candidate["width"]
-    )
+    box = max(candidates, key=score)
+    start, end, w = box["start"], box["end"], box["width"]
+    center = (start + end) / 2
+
+    # กรอบชิดซ้ายสุด (ตำแหน่งพัก) ยังนับว่าเห็นครบ ถ้าลูกศรไม่ถูกตัด
+    left_clipped = box["touch_left"]
+    if left_clipped and box["chevron"]:
+        chevron_start = start + int(np.argmax(chevron[start:end + 1]))
+        left_clipped = chevron_start - start < 4
+
+    # ชนขอบขวา = อาจรวมกับขอบ UI ปลายแถบ -> ไม่ใช้เรียนรู้ความกว้าง
+    full = not (left_clipped or box["touch_right"]
+                or box["fish_left"] or box["fish_right"])
+
+    ref_w = exp_w or BOX_DEFAULT_WIDTH
+    if not full:
+        half = ref_w / 2
+        if w < ref_w * BOX_PARTIAL_RATIO:
+            # เห็นไม่ครบ -> ยึดขอบด้านที่ไม่ถูกบัง
+            full = False
+            if left_clipped and not box["touch_right"]:
+                center = end - half + 0.5
+            elif box["touch_right"] and not box["touch_left"]:
+                center = start + half - 0.5
+            elif box["fish_right"] and not box["fish_left"]:
+                center = start + half - 0.5
+            elif box["fish_left"] and not box["fish_right"]:
+                center = end - half + 0.5
+        elif w > ref_w * 1.15:
+            # กว้างเกิน (ติดกับขอบ UI ที่ปลายแถบ) -> ยึดขอบด้านที่ไม่ติด
+            full = False
+            if box["touch_right"] and not box["touch_left"]:
+                center = start + half - 0.5
+            elif box["touch_left"] and not box["touch_right"]:
+                center = end - half + 0.5
+
+    return {
+        "center": int(round(center)),
+        "width": int(w),
+        "full": full,
+        "start": int(start),
+        "end": int(end),
+    }
 
 
 def find_bar_x(
     frame,
     expected_width=None,
-    min_width=30,
+    min_width=None,
     max_width=None,
     edge=3,
 ):
-    """คืนค่า center X ของก้อนดำที่มีรูปทรงเป็นแถบแนวนอน"""
-    candidate = _select_bar_candidate(
-        frame,
-        expected_width,
-        min_width,
-        max_width,
-        edge,
-    )
-    if candidate is None:
-        return None
-    return int(round((candidate["start"] + candidate["end"]) / 2))
+    """คืนค่า center X ของกรอบดำ (min/max_width เก็บไว้เพื่อ compatibility)"""
+    box = detect_reel_box(frame, expected_width, edge)
+    return None if box is None else box["center"]
 
 
 def find_bar_width(
     frame,
     expected_width=None,
-    min_width=30,
+    min_width=None,
     max_width=None,
     edge=3,
 ):
-    """คืนค่าความกว้างแถบดำ เพื่อใช้ปรับตัวข้ามรอบการทำงาน"""
-    candidate = _select_bar_candidate(
-        frame,
-        expected_width,
-        min_width,
-        max_width,
-        edge,
-    )
-    if candidate is None:
+    """คืนค่าความกว้างกรอบดำ เฉพาะตอนเห็นครบ (ใช้เรียนรู้)"""
+    box = detect_reel_box(frame, expected_width, edge)
+    if box is None or not box["full"]:
         return None
-    return candidate["width"]
+    return box["width"]
 
 # ============================================================
 # FIND FISH + BAR
@@ -359,33 +446,39 @@ def find_fish_and_bar_x(
     region,
     prev_fish_x=None,
     expected_bar_width=None,
-    bar_width_min=30,
+    bar_width_min=None,
     bar_width_max=None,
     bar_edge=3,
+    frame=None,
 ):
 
-    frame = grab(region)
+    if frame is None:
+        frame = grab(region)
 
     fish_x = find_fish_x(
         frame,
         prev_fish_x
     )
 
-    bar_x = find_bar_x(
+    box = detect_reel_box(
         frame,
         expected_bar_width,
-        bar_width_min,
-        bar_width_max,
         bar_edge,
     )
 
-    bar_width = find_bar_width(
-        frame,
-        expected_bar_width,
-        bar_width_min,
-        bar_width_max,
-        bar_edge,
+    bar_x = None if box is None else box["center"]
+    bar_width = (
+        box["width"]
+        if box is not None and box["full"]
+        else None
     )
+
+    # กันค่าเพี้ยน: เรียนรู้เฉพาะความกว้างที่อยู่ในช่วงที่ตั้งไว้
+    if bar_width is not None:
+        if bar_width_min and bar_width < bar_width_min * 0.7:
+            bar_width = None
+        elif bar_width_max and bar_width > bar_width_max:
+            bar_width = None
 
     return fish_x, bar_x, bar_width
 
